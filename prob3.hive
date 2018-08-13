@@ -1,0 +1,74 @@
+--Print headers
+set hive.cli.print.header=true;
+
+DROP TABLE IF EXISTS bombing;
+CREATE EXTERNAL TABLE IF NOT EXISTS bombing(eventid INT, country STRING, service STRING, missiondate DATE, sourceid STRING, sourcerecord STRING, validairroot STRING, takeoffloc STRING, tgtlat STRING, tgtlong STRING, tgttype STRING, numweapdelivered INT, timeontarget STRING, weapontype STRING, weapontypeclass STRING, weapontypeweight FLOAT, aircraft_original STRING, aircraft_root STRING, airforcegroup STRING, airforcesqdn STRING, callsign STRING, flthours STRING, mfunc STRING, mfunc_desc STRING, missionid STRING, numofacft INT, operationsupported STRING, periodofday STRING, unit STRING, tgtcloudcover STRING, tgtcontrol STRING, tgtcountry STRING, tgtid STRING, tgtorigcoords STRING, tgtorigcoordsformat STRING, tgtweather STRING, additionalinfo STRING, geozone STRING, id STRING, mfunc_desc_class STRING, numweaponsjettisoned INT, numweaponsreturned INT, releasealtitude STRING, releasefltspeed DOUBLE, resultsbda STRING, timeofftarget DOUBLE, weaponsloadedweight FLOAT) ROW FORMAT DELIMITED FIELDS TERMINATED BY ', ' LOCATION
+'s3://aws-mschweihs-final/bombing';
+
+--According to History.com:
+--REF: http://www.history.com/topics/vietnam-war/operation-rolling-thunder
+--Operation Rolling Thunder was the codename for an American bombing campaign during the Vietnam War. U.S. military aircraft attacked targets throughout North Vietnam from March 1965 to October 1968. This massive bombardment was intended to put military pressure on North Vietnam’s communist leaders and reduce their capacity to wage war against the U.S.-supported government of South Vietnam. Operation Rolling Thunder marked the first sustained American assault on North Vietnamese territory and represented a major expansion of U.S. involvement in the Vietnam War.
+--
+--The sustained bombing of North Vietnam lasted for more than three years, with occasional brief interruptions. Johnson finally halted the campaign on October 31, 1968, in order to pursue a negotiated settlement with the Communists.
+---
+--I want to know between March 1965 and October 1968:
+--what was the average daily mission count by the US against North Vietnam?
+
+DROP TABLE IF EXISTS rollthunder;
+CREATE TABLE rollthunder(missiondate STRING, country STRING, tgtcountry STRING, tgttype STRING, eventid INT, bombsdropped INT);
+INSERT INTO TABLE rollthunder SELECT missiondate, country, tgtcountry, tgttype, eventid, numweaponsjettisoned 
+FROM bombing
+WHERE (YEAR(missiondate) == 1965 AND MONTH(missiondate) >= 03) OR (YEAR(missiondate) <= 1967 AND YEAR(missiondate) >= 1966) OR( YEAR(missiondate) == 1968 AND MONTH(missiondate) <= 10) AND country != "" 
+ORDER BY missiondate, tgtcountry;
+
+INSERT OVERWRITE DIRECTORY 's3://aws-mschweihs-final/answer1' SELECT YEAR(missiondate) as Year, COUNT(eventid)/COUNT(DISTINCT DAY(missiondate)) as AvgDailyMissionCount
+FROM rollthunder
+GROUP BY YEAR(missiondate);
+
+--year	avgdailymissioncount
+--1965	2072.7419354838707
+--1966	13296.838709677419
+--1967	19156.064516129034
+--1968	21984.870967741936
+
+--how did this compare to the missions before and after Operation Rolling Thunder?
+
+INSERT OVERWRITE DIRECTORY 's3://aws-mschweihs-final/answer2' SELECT YEAR(t1.missiondate) as Year, COUNT(t1.eventid)/COUNT(DISTINCT DAY(t1.missiondate)) as AvgDailyMissionCount
+FROM (SELECT missiondate, country, tgtcountry, tgttype, eventid, numweaponsjettisoned 
+FROM bombing
+WHERE (YEAR(missiondate) == 1968 AND MONTH(missiondate) > 10) OR (YEAR(missiondate) > 1968) OR (YEAR(missiondate) == 1965 AND MONTH(missiondate) < 03) OR (YEAR(missiondate) < 1965) AND country != "" AND numweaponsjettisoned > 0) t1
+GROUP BY YEAR(t1.missiondate)
+ORDER BY year ASC;
+
+--year	avgdailymissioncount
+--1968	3137.8064516129034
+--1969	17398.354838709678
+--1970	24592.516129032258
+--1971	15651.290322580646
+--1972	19459.41935483871
+--1973	8004.5161290322585
+--1974	3377.451612903226
+--1975	913.8064516129032
+
+--what were the top 5 types of targets during Operation Rolling Thunder?
+
+INSERT OVERWRITE DIRECTORY 's3://aws-mschweihs-final/answer3' SELECT tgttype as targetType, SUM(bombsdropped) as bombsDropped
+FROM rollthunder
+WHERE bombsdropped > 0 AND tgttype != ""
+GROUP BY tgttype
+ORDER BY bombsDropped DESC;
+
+
+--According to the same Article on History.com:
+--By the time the last American combat troops left Vietnam in 1973, the U.S. military had dropped some 4.6 million tons of bombs on Vietnam, destroying a large percentage of the nation’s towns and villages and killing an estimated 2 million Vietnamese people.
+-- How does this estimate compare to the kaggle bombing data set?
+
+INSERT OVERWRITE DIRECTORY 's3://aws-mschweihs-final/answer4' SELECT SUM(bombsdropped * weapontypeweight)/2000 as TonsBombsDropped FROM (SELECT numweaponsjettisoned as bombsdropped, weapontypeweight
+FROM bombing
+WHERE YEAR(missiondate) <= '1973' AND country == "UNITED STATES OF AMERICA" AND (tgtcountry == "NORTH VIETNAM" OR tgtcountry == "SOUTH VIETNAM") AND weapontypeweight > 0) t1;
+
+---tonsbombsdropped
+---3034157.7075
+
+
+
